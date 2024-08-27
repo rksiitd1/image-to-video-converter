@@ -2,7 +2,7 @@ import React, { useState, useCallback, useEffect } from 'react';
 import { motion } from 'framer-motion';
 import { ChevronDown, Music, Folder, Play } from 'lucide-react';
 import { FFmpeg } from '@ffmpeg/ffmpeg';
-import { fetchFile, toBlobURL } from '@ffmpeg/util';
+import { fetchFile } from '@ffmpeg/util';
 
 export default function Component() {
   const [ffmpeg, setFFmpeg] = useState<FFmpeg | null>(null);
@@ -24,10 +24,7 @@ export default function Component() {
       ffmpegInstance.on('progress', ({ progress }) => {
         setProgress(Math.round(progress * 100));
       });
-      await ffmpegInstance.load({
-        coreURL: await toBlobURL(`/ffmpeg-core.js`, 'text/javascript'),
-        wasmURL: await toBlobURL(`/ffmpeg-core.wasm`, 'application/wasm'),
-      });
+      await ffmpegInstance.load();
       setFFmpeg(ffmpegInstance);
     };
     loadFFmpeg();
@@ -38,7 +35,7 @@ export default function Component() {
     if (files) {
       const imageFiles = Array.from(files).filter(file => 
         file.type.startsWith('image/')
-      );
+      ).sort((a, b) => a.name.localeCompare(b.name)); // Sort files by name
       setImageFiles(imageFiles);
       setSelectedFolder(`${imageFiles.length} images selected`);
     }
@@ -53,15 +50,25 @@ export default function Component() {
     try {
       // Write image files to FFmpeg's virtual file system
       for (let i = 0; i < imageFiles.length; i++) {
-        await ffmpeg.writeFile(`image${i.toString().padStart(3, '0')}.jpg`, await fetchFile(imageFiles[i]));
+        const fileName = `image${i.toString().padStart(5, '0')}.jpg`;
+        await ffmpeg.writeFile(fileName, await fetchFile(imageFiles[i]));
       }
+
+      // Create a file with the list of images
+      const fileList = imageFiles.map((_, index) => {
+        return `file 'image${index.toString().padStart(5, '0')}.jpg'`;
+      }).join('\n');
+      await ffmpeg.writeFile('fileList.txt', fileList);
 
       // Run FFmpeg command to convert images to video
       await ffmpeg.exec([
+        '-f', 'concat',
+        '-safe', '0',
+        '-i', 'fileList.txt',
         '-framerate', fps.toString(),
-        '-i', 'image%03d.jpg',
         '-c:v', 'libx264',
         '-pix_fmt', 'yuv420p',
+        '-vf', 'scale=1280:720:force_original_aspect_ratio=decrease,pad=1280:720:(ow-iw)/2:(oh-ih)/2',
         'output.mp4'
       ]);
 
